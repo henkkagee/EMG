@@ -21,7 +21,7 @@ class EMGApp(QWidget):
         red = QPushButton(self)
         red.setStyleSheet("background-color: black")
         red.setGeometry(350, 200, 100, 100)
-        self.red = red
+        self.red = red 
         red.clicked.connect(self.loop)
     
     
