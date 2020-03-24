@@ -4,25 +4,10 @@ from app import EMGApp
 import sys
 import traceback
 
-
 def excepthook(type_, value, traceback_):
     traceback.print_exception(type_, value, traceback_)
     QtCore.qFatal('')
 sys.excepthook = excepthook
-
-# Back up the reference to the exceptionhook
-sys._excepthook = sys.excepthook
-
-def my_exception_hook(exctype, value, traceback):
-    # Print the error and traceback
-    print(exctype, value, traceback)
-    # Call the normal Exception hook after
-    sys.excepthook(exctype, value, traceback)
-    sys.exit(1)
-
-# Set the exception hook to our wrapping function
-sys.excepthook = my_exception_hook
-
 
 
 class MainWindow(QMainWindow):
