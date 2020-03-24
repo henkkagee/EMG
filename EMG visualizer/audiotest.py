@@ -1,37 +1,55 @@
-# Generate a 440 Hz square waveform in Pygame by building an array of samples and play
-# it for 5 seconds.  Change the hard-coded 440 to another value to generate a different
-# pitch.
-#
-# Run with the following command:
-#   python pygame-play-tone.py
+import pyaudio
+import numpy as np
+import math
 
-from array import array
-from time import sleep
-import numpy
+def play_tone(frequency, dur):
+    p = pyaudio.PyAudio()
+    volume = 0.8     # range [0.0, 1.0]
+    fs = 44100       # sampling rate, Hz, must be integer
+#   duration = 0.3   # in seconds, may be float
+    duration=dur    #"dur" parameter can be removed and set directly
+    f=frequency
 
-import pygame
-from pygame.mixer import Sound, get_init, pre_init
+    # We need to ramp up (I used an exponential growth formula)
+    # from low volume to the volume we want.
+    # For some reason (I can't bothered to figure that out) the
+    # following factor is needed to calculate how many steps are
+    # needed to reach maximum volume:
+    # 0.693147 = -LN(0.5)
 
-class Note(Sound):
+    stepstomax = 50
+    stepstomax_mod = int(round(stepstomax/0.693147)) 
+    ramprate  = 1/(math.exp(0.5)*stepstomax_mod)
 
-    def __init__(self, frequency, volume=.1):
-        self.frequency = frequency
-        Sound.__init__(self, buffer = self.build_samples())
-        self.set_volume(volume)
+    decayrate = 0.9996
+    #Decay could be programmed better. It doesn't take tone duration into account.
+    #That means it might not reach an inaudible level before the tone ends. 
 
-    def build_samples(self):
-        sample_rate = pygame.mixer.get_init()[0]
-        period = int(round(sample_rate / self.frequency))
-        amplitude = 2 ** (abs(pygame.mixer.get_init()[1]) - 1) - 1
-    
-        def frame_value(i):
-            return amplitude * numpy.sin(2.0 * numpy.pi * self.frequency * i / sample_rate)
-    
-        return numpy.array([frame_value(x) for x in range(0, period)]).astype(numpy.int16)
+    #sine wave
+    samples1=(np.sin(2*np.pi*np.arange(0,fs*duration,1)*f/fs))
 
-if __name__ == "__main__":
-    pre_init(44100, -16, 1, 1024)
-    pygame.init()
-    Note(440).play(-1)
-    print("played")
-    sleep(5)
+    stepcounter=0
+    for nums in samples1:
+        thisnum=samples1[stepcounter]
+        if stepcounter<stepstomax_mod:
+            #the ramp up stage
+            samples1[stepcounter]=volume*thisnum*(pow(ramprate+1,stepcounter+1)-1)
+        else:
+            #the decay stage
+            samples1[stepcounter]=volume*thisnum*(pow(decayrate,stepcounter-stepstomax)) 
+        stepcounter+=1
+
+    samples = samples1.astype(np.float32).tobytes()
+    stream = p.open(format=pyaudio.paFloat32,
+        channels=1,
+        rate=fs,
+        output=True)        
+    stream.write(samples)
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+play_tone(261.6, 0.3)
+play_tone(329.6, 0.3)
+play_tone(392, 0.3) 
+play_tone(523.3, 0.6)
