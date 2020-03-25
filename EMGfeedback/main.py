@@ -21,10 +21,11 @@ class MainWindow(QMainWindow):
 def main():
     # Create the Qt Application
     app = QApplication(sys.argv)
-    widget = EMGApp()
+    width, height = 1200, 800
+    widget = EMGApp(width, height)
     
     window = MainWindow(widget)
-    window.resize(800, 800)
+    window.resize(width, height)
     window.show()
 
     sys.exit(app.exec_())

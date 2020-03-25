@@ -1,16 +1,15 @@
-from PyQt5.QtWidgets import QPushButton, QWidget, QVBoxLayout
+from PyQt5.QtWidgets import QPushButton, QWidget
 from PyQt5.QtCore import pyqtSlot, QThread, pyqtSignal
 from PyQt5.QtCore import Qt, QObject
+from PyQt5.QtGui import QPainter, QPen, QColor, QBrush
 import serial                    # serial port IO
 import math
 import pyaudio                   # audio generation
 import numpy as np               # audio generation
 import time                      # timer used for frequency modulation
-import datetime
 import matplotlib.pyplot as plt  # data plotting
 import csv
 import wave
-
     
 ''' Serial and audio IO in separate thread to keep GUI usable and responsive '''
 class Loop(QObject):
@@ -20,6 +19,7 @@ class Loop(QObject):
     runLoop = pyqtSignal(bool)
     finished = pyqtSignal()
     update_button = pyqtSignal(list)
+    output = pyqtSignal(int)
     
     # sound playback variables
     CHUNK = 4096
@@ -88,7 +88,7 @@ class Loop(QObject):
                 break
             line = ser.readline().decode().split('-')
             try:
-                flex, ext = int(line[0]), int(line[1])
+                flex, ext = int(line[0])*2, int(line[1])*2
                 res = (flex - ext)/2 + 255
                 mv_avg[mv_avg_idx] = res
                 output = sum(mv_avg) / 5
@@ -127,6 +127,8 @@ class Loop(QObject):
                 mv_avg_idx = 0
             else:
                 mv_avg_idx += 1
+            self.output.emit(output)
+            
         stream.close()
         ser.close()
         self.finished.emit()
@@ -141,9 +143,10 @@ class Loop(QObject):
 ''' GUI '''
 class EMGApp(QWidget):
     
-    def __init__(self):
+    def __init__(self, width, height):
         super().__init__()
-        
+        self.width = width
+        self.height = height
         # create QThread and use it for reading data
         thread = QThread(self)
         thread.start()
@@ -153,19 +156,19 @@ class EMGApp(QWidget):
         self.loop.requestSignal.connect(self.send_run_status)
         self.loop.finished.connect(self.stop)
         self.loop.update_button.connect(self.updateButton)
+        self.loop.output.connect(self.getOutput)
 
-        self.setGeometry(600, 270, 500, 400)
+        #self.setGeometry(600, 270, 500, 400)
         btn = QPushButton("Run continuous frequency-modulated signal", self)
         btn.setStyleSheet("QPushButton { background-color: green; color: white }"
                         "QPushButton:disabled { background-color: red; color: white }")
-        btn.setFixedSize(250, 50)
+        btn.setGeometry(width/2-200, height/2-300, 400, 75)
         btn.clicked.connect(self.run)
         self.btn = btn
         
-        lay = QVBoxLayout(self)
-        lay.addWidget(self.btn, alignment=Qt.AlignCenter)
         self.runLoop = False
         self.mode = 0
+        self.output = 0
         
         self.setFocusPolicy(Qt.StrongFocus)
         self.grabKeyboard()
@@ -182,6 +185,13 @@ class EMGApp(QWidget):
     @pyqtSlot()
     def stop(self):
         self.runLoop = False
+        
+    @pyqtSlot(int)
+    def getOutput(self, output):
+        if self.runLoop == True:
+            self.output = output
+            self.repaint()
+            
     
     @pyqtSlot()
     def send_run_status(self):
@@ -192,6 +202,27 @@ class EMGApp(QWidget):
         self.btn.setText(ls[0])
         self.btn.setEnabled(ls[1])
         
+    def paintEvent(self, event):
+        #if self.runLoop == False:
+        #    return
+        painter = QPainter(self)
+        painter.begin(self)
+        brush = QBrush(Qt.yellow)
+        if self.output >= 255:
+            painter.setPen(QPen(QColor(0, 255, 0, 64)))
+            brush.setColor(QColor(0, 255, 0, 128))
+            painter.fillRect(self.width/2, self.height/2 - 50, 1.6 * (self.output - 255), 100, brush)
+        else:
+            painter.setPen(QPen(QColor(255, 0, 0, 64)))
+            brush.setColor(QColor(255, 0, 0, 128))
+            painter.fillRect(self.width/2 + 1.6 * (self.output - 255), self.height/2 - 50, 1.6 * (255 - self.output), 100, brush)
+        painter.setPen(QPen(Qt.black, 4))
+        painter.drawLine(195, self.height/2, self.width - 195, self.height/2)
+        painter.setPen(QPen(Qt.darkGray, 2))
+        painter.drawLine(195, self.height/2, self.width - 195, self.height/2)
+        painter.drawLine(self.width/2 + 1.6 * (self.output - 255), self.height/2 + 50, self.width/2 + 1.6 * (self.output - 255), self.height/2 - 50)
+        
+    
     def keyPressEvent(self, event):
         print("Keyevent fetched")
         key = event.key()
