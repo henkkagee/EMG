@@ -59,20 +59,27 @@ class Loop(QObject):
         
         p = pyaudio.PyAudio()
         if 0 <= mode <= 1:
-            stream = p.open(format = pyaudio.paFloat32,    # stream1 for continuous playback
+            stream = p.open(format = pyaudio.paFloat32,
                         channels = 2,
                         rate = self.RATE,
                         output = True,
                         stream_callback = self.callback)
-        else:
+        elif mode == 2:
             wf = wave.open('1khz.wav', 'rb')
             stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
                         channels=wf.getnchannels(),
                         rate=wf.getframerate(),
                         output=True)
             start = time.time()
-        ser = serial.Serial('COM3', 9600)    
-
+        
+        else:
+            wf = wave.open('pulses.wav', 'rb')
+            stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                        channels=wf.getnchannels(),
+                        rate=wf.getframerate(),
+                        output=True)
+            start = time.time()
+        ser = serial.Serial('COM3', 9600)
         count = 0
         data = []
         mv_avg = [0 for i in range(5)]      # moving average
@@ -97,20 +104,27 @@ class Loop(QObject):
                 break
             
             if mode == 0:      # continuous frequency-modulated signal
-                self.frequency = 1000 + 2 * output    
+                self.frequency = 1000 + 2 * output
             elif mode == 1:    # discrete frequency-modulated signal, 4 levels
                 self.frequency = 1000 + 100 * (output//64)
             elif mode == 2:    # pulse-modulated signal 4 levels, still quite clumsy
                 self.frequency = 1000           
-                if output == 0:
+                if output == 0 or output//64 == 0:
                     self.pipfrequency = 0
                 else:
                     self.pipfrequency = 1 / (output//64)
-                
+            elif mode == 3:
+                self.frequency = 1000
+                if output == 0 or output//64 == 0:
+                    self.pipfrequency = 0
+                else:
+                    self.pipfrequency = 1 / 0.5 * (output//64)
             if mode == 2 or mode == 3:
-                if time.time() - start > self.pipfrequency:
-                    wfData = wf.readframes(self.CHUNK)
-                    stream.write(wfData)
+                if time.time() - start > self.pipfrequency:     # need to find a faster way to play audio
+                    wfData = wf.readframes(self.CHUNK)          # or get a separate thread
+                    while len(wfData) > 0:
+                        stream.write(wfData)
+                        wfData = wf.readframes(self.CHUNK)
                     wf.rewind()
                     start = time.time()
                     
@@ -168,7 +182,7 @@ class EMGApp(QWidget):
         
         self.runLoop = False
         self.mode = 0
-        self.output = 0
+        self.output = 255
         
         self.setFocusPolicy(Qt.StrongFocus)
         self.grabKeyboard()
@@ -203,8 +217,8 @@ class EMGApp(QWidget):
         self.btn.setEnabled(ls[1])
         
     def paintEvent(self, event):
-        #if self.runLoop == False:
-        #    return
+        if self.runLoop == False:
+            return
         painter = QPainter(self)
         painter.begin(self)
         brush = QBrush(Qt.yellow)
