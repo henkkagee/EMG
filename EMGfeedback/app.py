@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QPushButton, QWidget
+from PyQt5.QtWidgets import QPushButton, QWidget, QLineEdit
 from PyQt5.QtCore import pyqtSlot, QThread, pyqtSignal
 from PyQt5.QtCore import Qt, QObject
 from PyQt5.QtGui import QPainter, QPen, QColor, QBrush
@@ -53,11 +53,18 @@ class Loop(QObject):
     def get_run_status(self, status):
         self.runStatus = status
     
-    def run(self, mode):
+    def run(self, mode, target, margin):
         print("Thread start")
         self.update_button.emit(["Running...", False])
         
         p = pyaudio.PyAudio()
+        
+        tonefile = wave.open('tone.wav', 'rb')         # indicator when target value is hit
+        tone = p.open(format=p.get_format_from_width(tonefile.getsampwidth()),
+                        channels=tonefile.getnchannels(),
+                        rate=tonefile.getframerate(),
+                        output=True)
+        
         if 0 <= mode <= 1:
             stream = p.open(format = pyaudio.paFloat32,
                         channels = 2,
@@ -90,6 +97,7 @@ class Loop(QObject):
         self.runStatus = True
         wfData = None
         
+        counter = 0
         while True:
             if self.runStatus == False:
                 break
@@ -127,11 +135,10 @@ class Loop(QObject):
                         wfData = wf.readframes(self.CHUNK)
                     wf.rewind()
                     start = time.time()
-                    
             else:
                 data.append(output)
             
-            #plt.scatter(count, output, s=1, c='black')        # need to find more efficient plotting method
+            #plt.scatter(count, output, s=1, c='black')        # need to find more efficient realtime plotting method
             #plt.show()
             plt.pause(0.0001)
             count += 1
@@ -142,6 +149,19 @@ class Loop(QObject):
             else:
                 mv_avg_idx += 1
             self.output.emit(output)
+            
+            if target - margin <= output >= target + margin:
+                counter += 0
+            else:
+                counter = 0
+            if counter == 30:
+                tonedata = tonefile.readframes(self.CHUNK)
+                while len(tonedata) > 0:
+                    stream.write(wfData)
+                    tonedata = tonefile.readframes(self.CHUNK)
+                    time_to_find = time.time() - start
+                tonefile.rewind()
+                counter = 0
             
         stream.close()
         ser.close()
@@ -156,6 +176,7 @@ class Loop(QObject):
 
 ''' GUI '''
 class EMGApp(QWidget):
+    
     
     def __init__(self, width, height):
         super().__init__()
@@ -180,9 +201,14 @@ class EMGApp(QWidget):
         btn.clicked.connect(self.run)
         self.btn = btn
         
+        self.textbox = QLineEdit(self)
+        self.textbox.setGeometry(width/2-300, height/2-275, 50, 25)
+        
         self.runLoop = False
         self.mode = 0
         self.output = 255
+        self.target = 255
+        self.MARGIN = 10        # size of target area
         
         self.setFocusPolicy(Qt.StrongFocus)
         self.grabKeyboard()
@@ -192,7 +218,11 @@ class EMGApp(QWidget):
     def run(self):
         if self.runLoop == False:
             self.runLoop = True
-            self.loop.run(self.mode)
+            try:
+                self.target = int(self.textbox.text())
+            except (ValueError, TypeError) as e:
+                self.target = 255
+            self.loop.run(self.mode, self.target, self.MARGIN)
         else:
             self.runLoop = False
     
@@ -230,11 +260,17 @@ class EMGApp(QWidget):
             painter.setPen(QPen(QColor(255, 0, 0, 64)))
             brush.setColor(QColor(255, 0, 0, 128))
             painter.fillRect(self.width/2 + 1.6 * (self.output - 255), self.height/2 - 50, 1.6 * (255 - self.output), 100, brush)
+        
+        brush.setColor(QColor(0, 0, 0, 32))         # target
+        painter.setPen(QPen(QColor(0, 0, 0, 64)))
+        painter.fillRect(self.width/2 + 1.6 * (self.target - 255) - 30, self.height/2 - 50, 1.6 * (255 - self.target) + 60, 100, brush)
+        
         painter.setPen(QPen(Qt.black, 4))
         painter.drawLine(195, self.height/2, self.width - 195, self.height/2)
         painter.setPen(QPen(Qt.darkGray, 2))
         painter.drawLine(195, self.height/2, self.width - 195, self.height/2)
         painter.drawLine(self.width/2 + 1.6 * (self.output - 255), self.height/2 + 50, self.width/2 + 1.6 * (self.output - 255), self.height/2 - 50)
+        
         
     
     def keyPressEvent(self, event):
