@@ -14,7 +14,7 @@ class MainWindow(QMainWindow):
     
     def __init__(self, widget):
         QMainWindow.__init__(self)
-        self.setWindowTitle("EMG")
+        self.setWindowTitle("EMG feedback")
         
         self.setCentralWidget(widget)
         
@@ -33,4 +33,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
