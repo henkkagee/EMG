@@ -4,19 +4,30 @@ from PyQt5.QtCore import Qt, QObject
 from PyQt5.QtGui import QPainter, QPen, QColor, QBrush
 
 import os
-os.add_dll_directory(r'C:/Program Files (x86)/VideoLAN/VLC')       # vlc directory for easy mp3 support
+os.add_dll_directory(r'C:/Program Files (x86)/VideoLAN/VLC')       # vlc directory for simple mp3 support
 import vlc
 
-import serial                    # serial port IO
+import serial                       # serial port IO
 import math
-import pyaudio                   # audio generation
-import numpy as np               # audio generation
-import time                      # timer used for frequency modulation
-import matplotlib.pyplot as plt  # data plotting
+import pyaudio                      # audio generation
+import numpy as np
+from scipy import signal            # used for real-time lowpass butterworth-filter
+import time                         # timer used for frequency modulation
+#import matplotlib.pyplot as plt    # data plotting
 import csv
-import wave
 
-''' Separate thread for audio pulse player '''
+
+def lowpass_butterworth(data):
+    # create an order 3 lowpass butterworth filter
+    b, a = signal.butter(3, 0.15)
+    z = signal.lfilter_zi(b, a)
+    result = np.zeros(data.size)
+    for i, x in enumerate(data):
+        result[i], z = signal.lfilter(b, 1, [x], zi=z)
+    return np.ndarray.tolist(result)
+
+
+''' Separate thread for audio pulse playback '''
 class audioPlayer(QObject):
     
     def __init__(self, parent):
@@ -64,20 +75,13 @@ class Loop(QObject):
         self.target = 255
         self.margin = 10
         self.levels = 4
-        
-    def sine(self, current_time):
     
-        length = self.CHUNK
-        factor = float(self.frequency) * (math.pi * 2) / self.RATE
-        this_chunk = np.arange(length) + current_time
-        return np.sin(this_chunk * factor)
-
-    def get_chunk(self):
-        data = self.sine(time.time())
-        return data * 0.1
-        
+    # generate chunkwise sinewave of given frequency
     def callback(self, in_data, frame_count, time_info, status):
-        chunk = self.get_chunk() * 0.25
+        factor = np.divide(np.multiply(np.float32(self.frequency), (math.pi * 2)), self.RATE)
+        current_chunk = np.arange(self.CHUNK) + time.time()
+        sine = np.sin(current_chunk * factor) * 4
+        chunk = np.multiply(np.multiply(sine, 0.1), 0.25)
         data = chunk.astype(np.float32).tostring()
         return (data, pyaudio.paContinue)
     
@@ -92,96 +96,100 @@ class Loop(QObject):
         self.update_button.emit(["Running...", False])
         p = pyaudio.PyAudio()
         fin_tone = "file:///tone.mp3"
-        if 0 <= self.mode <= 1:
-            # continuous frequency-modulated audio stream
-            stream = p.open(format = pyaudio.paFloat32,
-                        channels = 2,
-                        rate = self.RATE,
-                        output = True,
-                        stream_callback = self.callback) 
-        elif self.mode == 2:
-            start = time.time()
+        # continuous frequency-modulated audio stream
+        stream = p.open(format = pyaudio.paFloat32,
+                    channels = 2,
+                    rate = self.RATE,
+                    output = True,
+                    stream_callback = self.callback) 
+        if self.mode == 2:
             pulse = "file:///single_pulse.mp3"
-        else:
-            start = time.time()
+            stream.stop_stream()
+            self.frequency = 1000/2
+        elif self.mode == 3:
             pulse = "file:///pulses.mp3"
         ser = serial.Serial('COM3', 9600)
-        count = 0
-        data = []
-        mv_avg = [0 for i in range(5)]      # moving average
-        mv_avg_idx = 0
-        #plt.ion()                # used for realtime plotting
-        #fig=plt.figure()         # create new figure on each function call
-        counter = 0
+        count = np.int64(0)
+        data = [0 for i in range(100)]              # for data filtering, windowed to 100 samples
+        final = []                                  # for saving results
+        mode = self.mode
         time_to_find = -1
         if self.levels > 10:
             self.levels = 10
-        level_factor = 256//self.levels
+        level_factor = 256 // self.levels
+        pulseDelay = 1
         target_time = time.time()
         start = time.time()
+        fin = time.time()
         while True:
             if self.parent.runLoop == False:
                 break
-            
             # read serial data
-            line = ser.readline().decode().split('-')
+            line = ser.readline().decode().strip()
             try:
-                flex, ext = int(line[0]), int(line[1])
-                res = flex - ext
-                mv_avg[mv_avg_idx] = res
-                output = sum(mv_avg) / 5
+                # moving average smoothing done on controller
+                output = int(line)
             except (ValueError, TypeError) as e:
-                print("{}: Invalid data", e)
+                print("{}: Invalid data - {}", e, line)
                 break
             
-            # change audio feedback parameters based on serial output
-            if self.mode == 0:      # continuous frequency-modulated signal
-                self.frequency = 1000 + output
-            elif self.mode == 1:    # discrete frequency-modulated signal
-                self.frequency = 1000 + 50 * (output//level_factor)
-            elif self.mode == 2:    # temporal frequency-modulated signal         
-                if output == 0 or output//level_factor == 0:
-                    pipfrequency = 0
-                else:
-                    pipfrequency = 1 / (output//level_factor)
-            elif self.mode == 3:     # temporal frequency-modulated pattern signal
-                if output == 0 or output//level_factor == 0:
-                    pipfrequency = 0
-                else:
-                    pipfrequency = 1 / (output//level_factor)
+            if len(data) >= 99:
+                data.pop(0)
+            data.append(output)
+            # apply low-pass filter
+            data = lowpass_butterworth(np.array(data))
+            # amplify and clamp signal after filtering
+            output = np.multiply(data[-1], 150)
+            if output > 255:
+                output = 255
+            if output < -255:
+                output = -255
+            final.append(output)
+            self.output.emit(output)
             
+            # change audio feedback parameters based on serial output
+            if mode == 0:      # continuous frequency-modulated signal
+                self.frequency = (1000 + output)/2
+            elif mode == 1:    # discrete frequency-modulated signal
+                self.frequency = (1000 + 50 * (output // level_factor))/2
+                
+            elif mode == 2 or mode == 3:    # temporal frequency-modulated signal   
+                output = abs(output)
+                if mode == 2 and output > 256 - (256/self.levels):
+                    pulseDelay = 100
+                    stream.start_stream()
+                else:
+                    if mode == 2:
+                        stream.stop_stream()
+                    if output == 0 or output// level_factor == 0:
+                        pulseDelay = 100
+                    else:
+                        pulseDelay = (self.levels - (output // level_factor)) * (1/self.levels)
+                    #print("output: {}, output // level_factor: {}, pulseDelay: {}".format(output, output // level_factor, pulseDelay))
+                    
+                    
             # control feedback pulse delay
-            if self.mode == 2 or self.mode == 3:
-                if time.time() - start > pipfrequency:
+            if mode == 2 or mode == 3:
+                if time.time() - start > pulseDelay:
                     self.playSound.emit(pulse)
                     start = time.time()
             
-            
-            #plt.scatter(count, output, s=1, c='black')        # realtime plotting not needed
-            #plt.show()
-            #plt.pause(0.0001)
             count += 1
-            
-            if mv_avg_idx >= 4:
-                mv_avg_idx = 0
-            else:
-                mv_avg_idx += 1
-            
             # check and control target intensity
-            if self.target - self.margin >= output <= self.target + self.margin:
+            if output < self.target - self.margin or output > self.target + self.margin:
                 # reset target timer
                 target_time = time.time()
             # if target is held for more than 1 second, play tone as sign of success
             if time.time() - target_time >= 1:
                 self.playSound.emit(fin_tone)
-                time_to_find = time.time() - start
+                time_to_find = np.subtract(time.time(), fin)
+                QThread.sleep(1)
+                break
             else:
-                start = time.time()
-            data.append(output)
-            self.output.emit(output)
+                target_time = time.time()
             
-        if (0 >= self.mode <= 1):
-            stream.close()
+        #plt.plot(data)
+        stream.close()
         ser.close()
         self.update_button.emit(["Finished", True])
         print("Thread complete")
@@ -190,7 +198,7 @@ class Loop(QObject):
             writer = csv.writer(file)
             writer.writerow([self.modeTable[self.mode], 'target: {}'.format(self.target), 'margin: {}'.format(self.margin),
                              'time to find and hold 1s: {}'.format(time_to_find)])
-            writer.writerow(data)
+            writer.writerow(final)
             writer.writerow([])
         self.finished.emit()
         
@@ -260,8 +268,7 @@ class EMGApp(QWidget):
                 self.levels = int(self.levelsTextbox.text())
             except ValueError:
                 self.levels = 4
-            # amount of levels on both flexor and extensor side, hence *2
-            self.loop.variables.emit([self.runLoop, self.mode, round(2.55 * self.target), self.margin, self.levels*2])
+            self.loop.variables.emit([self.runLoop, self.mode, round(2.55 * self.target), self.margin, self.levels])
             
         else:
             self.runLoop = False
@@ -305,7 +312,8 @@ class EMGApp(QWidget):
         # target intensity area
         brush.setColor(QColor(0, 0, 0, 32))
         painter.setPen(QPen(Qt.black, 2))
-        painter.fillRect(targetWPosL, hCenter-50, targetWPosR, 100, brush)        # line
+        painter.fillRect(targetWPosL, hCenter-50, targetWPosR, 100, brush)
+        # line
         painter.setPen(QPen(Qt.black, 4))
         painter.drawLine(195, self.height/2, self.width - 195, hCenter)
         painter.setPen(QPen(Qt.darkGray, 2))
