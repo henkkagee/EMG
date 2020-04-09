@@ -117,11 +117,12 @@ class Loop(QObject):
         # generate array of evenly distributed targets within range
         if test == True:
             k = -levels
-            while k < levels:
+            while k <= levels:
                 for i in range(0, numberOfTests//(levels * 2)):
                     targets.append(k)
                 k += 1
-                # still not exactly 50
+            while len(targets) < 50:
+                targets.append(random.randint(-levels, levels))
         else:
             targets = []
         print(targets)
