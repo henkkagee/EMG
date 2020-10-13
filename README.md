@@ -8,4 +8,6 @@ The tested setup consisted of:
 - Two Ottobock 13E200 EMG electrodes connected through an Adafruit motor shield to the Feather
 - External 7,4V battery for power connected directly to the motor shield and through a voltage converter to the Feather
 
-![Setup](setup.jpg)
+![Setup](images/setup.jpg)
+
+![UI](images/visualfeedback.png)
