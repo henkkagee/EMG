@@ -13,7 +13,6 @@ import pyaudio                      # audio generation
 import numpy as np
 from scipy import signal            # used for real-time lowpass butterworth-filter
 import time                         # timer used for frequency modulation
-#import matplotlib.pyplot as plt    # data plotting
 import csv
 import random
 
@@ -96,11 +95,11 @@ class Loop(QObject):
             left = np.zeros(frame_count)
         data = np.zeros((left.shape[0]*2,),np.float32)
         if self.value > 0:
-            data[::2] = np.zeros(frame_count)
-            data[1::2] = left
-        elif self.value  < 0:
             data[::2] = left
             data[1::2] = np.zeros(frame_count)
+        elif self.value  < 0:
+            data[::2] = np.zeros(frame_count)
+            data[1::2] = left
         else:
             data[::2] = left
             data[1::2] = left
@@ -118,10 +117,13 @@ class Loop(QObject):
         if test == True:
             k = -levels
             while k <= levels:
-                for i in range(0, numberOfTests//(levels * 2)):
+                if k == 0:
+                    k += 1
+                    continue
+                for i in range(0, numberOfTests//((levels * 2) - 1)):     # exclude 0
                     targets.append(k)
                 k += 1
-            while len(targets) < 50:
+            while len(targets) < numberOfTests:
                 targets.append(random.randint(-levels, levels))
         else:
             targets = []
@@ -136,7 +138,7 @@ class Loop(QObject):
         self.update_button.emit(["Running...", False])
         p = pyaudio.PyAudio()
         fin_tone = "file:///tone.mp3"
-        # continuous frequency-modulated audio stream
+        # continuous pitch-modulated audio stream
         stream = p.open(format = pyaudio.paFloat32,
                     channels = 2,
                     rate = self.RATE,
@@ -152,7 +154,7 @@ class Loop(QObject):
         ser = serial.Serial('COM3', 9600)
         
         toggle_neutral_target = 0
-        ignore = False                  # Ignore every other test for normalizing results
+        ignore = False                  # Ignore every other test for correct results
         
         while True:
             if test == True:
@@ -181,7 +183,7 @@ class Loop(QObject):
                 target_upper = target * (256/levels)
                 target_lower = target_upper - sign(target) * (256/levels)
             
-            print("upper: {}, lower: {}\ntarget: {}, levels: {}".format(target_upper, target_lower, target, levels))
+            print("{}. upper: {}, lower: {}\ntarget: {}, levels: {}".format(toggle_neutral_target, target_upper, target_lower, target, levels))
             
             level_factor = 256 // levels
             pulseDelay = 1
@@ -223,11 +225,11 @@ class Loop(QObject):
                 self.value  = output
                 self.output.emit([output, flex, ext, target])
                 Aoutput = abs(output)
-                print("lower: {}, upper: {}, output: {}, target_time: {}".format(target_lower, target_upper, output, time.time() - target_time))
+                #print("lower: {}, upper: {}, output: {}, target_time: {}".format(target_lower, target_upper, output, time.time() - target_time))
                 # change audio feedback parameters based on serial output
-                if mode == 0:      # continuous frequency-modulated signal
+                if mode == 0:      # continuous pitch-modulated signal
                     self.frequency = (1000 + Aoutput)/2
-                elif mode == 1:    # discrete frequency-modulated signal
+                elif mode == 1:    # discrete pitch-modulated signal
                     self.frequency = (1000 + 50 * (Aoutput // level_factor))/2
                     
                 elif mode == 2 or mode == 3:    # temporal frequency-modulated signal   
@@ -236,11 +238,12 @@ class Loop(QObject):
                         stream.start_stream()
                     else:
                         stream.stop_stream()
-                        if Aoutput == 0 or Aoutput// level_factor == 0:
+                        if Aoutput == 0:
                             pulseDelay = 100
                         else:
                             pulseDelay = (levels - (Aoutput // level_factor)) * (1/levels)
                         #print("output: {}, output // level_factor: {}, pulseDelay: {}".format(output, output // level_factor, pulseDelay))
+                        #pulseDelay = 1/(Aoutput/25)     # for continuous pulse & pattern signals
                         
                         
                 # control feedback pulse delay
@@ -248,14 +251,14 @@ class Loop(QObject):
                     if time.time() - start > pulseDelay:
                         if self.value  > 0:
                             if mode == 2:
-                                self.playSound.emit("file:///single_pulse_right.mp3")
+                                self.playSound.emit([self.testSuite, "file:///single_pulse_left.mp3"])
                             else:
-                                self.playSound.emit("file:///pulses_right.mp3")
+                                self.playSound.emit([self.testSuite, "file:///pulses_left.mp3"])
                         elif self.value  < 0:
                             if mode == 2:
-                                self.playSound.emit("file:///single_pulse_left.mp3")
+                                self.playSound.emit([self.testSuite, "file:///single_pulse_right.mp3"])
                             else:
-                                self.playSound.emit("file:///pulses_left.mp3")
+                                self.playSound.emit([self.testSuite, "file:///pulses_right.mp3"])
                         else:
                             self.playSound.emit([self.testSuite, pulse])
                         start = time.time()
@@ -284,9 +287,11 @@ class Loop(QObject):
             if ignore == False:
                 with open('EMGdata.csv', 'a', newline='') as file:
                     writer = csv.writer(file)
-                    writer.writerow([self.testSuite, self.modeTable[mode], 'target%: {}'.format(target/levels), 'target area%: {}'.format((256//levels)/256),
+                    writer.writerow([self.testSuite, self.modeTable[mode], "levels: {}".format(levels), 'target%: {}'.format(target/levels), 'target area%: {}'.format((256//levels)/256),
                                      'time to find and hold 1s: {}'.format(time_to_find)])
                     writer.writerow(final)
+                    writer.writerow(final_flex)
+                    writer.writerow(final_ext)
                     writer.writerow([])
             
             if len(targets) == 0 or stop == True:
@@ -324,7 +329,7 @@ class EMGApp(QWidget):
         self.ext = 0
         self.target = 0                 # target value. -100=full extension, 0=neutral position, 100=full flexion
         self.levels = 4                 # amount of discrete levels in feedback, default = 4
-        self.numberOfTargets = 50       # number of individual targets in test suite
+        self.numberOfTargets = 30       # number of individual targets in test suite
         self.testSuite = "audiovisual"
         self.test = False
         
@@ -337,7 +342,7 @@ class EMGApp(QWidget):
         
         
     def initUI(self):
-        btn = QPushButton("Run continuous frequency-modulated signal", self)
+        btn = QPushButton("Run continuous pitch-modulated signal", self)
         btn.setStyleSheet("QPushButton { background-color: green; color: white }"
                         "QPushButton:disabled { background-color: red; color: white }")
         btn.setGeometry(self.width/2-200, self.height/2-300, 400, 75)
@@ -374,8 +379,8 @@ class EMGApp(QWidget):
         self.radiobuttonVisual.toggled.connect(self.onClicked)
         
         self.checkboxMode = QCheckBox(self)
-        self.checkboxMode.setGeometry(self.width/2 - 550, self.height/2 - 280, 150, 25)
-        self.checkboxMode.setText(f"Run test with {self.numberOfTargets} targets?")
+        self.checkboxMode.setGeometry(self.width/2 - 650, self.height/2 - 280, 250, 25)
+        self.checkboxMode.setText(f"Run automated test sequence with {self.numberOfTargets} targets?")
         self.checkboxMode.toggled.connect(self.checkboxToggle)
         
     def onClicked(self):
@@ -396,7 +401,7 @@ class EMGApp(QWidget):
             try:
                 self.target = int(self.targetTextbox.text())
             except ValueError:
-                ''' test mode, generates an evenly distributed array of 50 different targets within level range '''
+                ''' test mode, generates an evenly distributed array of _30_ different targets within level range '''
                 self.target = 0
             try:
                 self.levels = int(self.levelsTextbox.text())
@@ -426,16 +431,21 @@ class EMGApp(QWidget):
         self.btn.setEnabled(ls[1])
         
     def paintEvent(self, event):
+        self.output = - self.output
+        self.target = -self.target
         wCenter = self.width/2
         hCenter = self.height/2
         painter = QPainter(self)
         painter.begin(self)
+        painter.drawText(wCenter-50, hCenter-100, f"Target: {-(self.target * 255/self.levels - 255/self.levels)/255*100:.1f} - {-(self.target * 255/self.levels)/255*100:.1f}%")
         if self.testSuite == "audio":
-            painter.drawText(wCenter, hCenter, f"Target: {self.target}")
             return
         cursorWPos = wCenter + 3 * (self.output)
-        flexPos = wCenter + 3 * (self.flex)
-        extPos = wCenter - 3 * (self.ext)
+        flex = -self.flex
+        ext = -self.ext
+        flexPos = wCenter + 3 * (flex)
+        extPos = wCenter - 3 * (ext)
+        
         
         target_higher = self.target * (256/self.levels)
         if self.target == 0:
@@ -453,12 +463,12 @@ class EMGApp(QWidget):
         brush = QBrush(Qt.darkGray)
         # coloured cursor indicators
         if self.output >= 0:
-            painter.setPen(QPen(QColor(0, 255, 0, 64)))
-            brush.setColor(QColor(0, 255, 0, 128))
-            painter.fillRect(wCenter, hCenter - 50, 3 * (self.output), 100, brush)
-        else:
             painter.setPen(QPen(QColor(255, 0, 0, 64)))
             brush.setColor(QColor(255, 0, 0, 128))
+            painter.fillRect(wCenter, hCenter - 50, 3 * (self.output), 100, brush)
+        else:
+            painter.setPen(QPen(QColor(0, 255, 0, 64)))
+            brush.setColor(QColor(0, 255, 0, 128))
             painter.fillRect(cursorWPos, hCenter - 50, wCenter-cursorWPos, 100, brush)
         
         # target intensity area
@@ -472,11 +482,10 @@ class EMGApp(QWidget):
         painter.drawLine(140, hCenter, self.width - 140, hCenter)
         # cursor
         painter.drawLine(cursorWPos, hCenter + 50, cursorWPos, hCenter - 50)
-        
+        # flexor and extensor indicators
         painter.setPen(QPen(QColor(0, 255, 0, 64)))
         brush.setColor(QColor(0, 255, 0, 128))
-        painter.fillRect(wCenter, hCenter + 150, 3 * (self.flex), 100, brush)
-        
+        painter.fillRect(wCenter, hCenter + 150, 3 * (flex), 100, brush)
         painter.setPen(QPen(QColor(255, 0, 0, 64)))
         brush.setColor(QColor(255, 0, 0, 128))
         painter.fillRect(extPos, hCenter + 150, wCenter-extPos, 100, brush)
@@ -496,10 +505,10 @@ class EMGApp(QWidget):
             self.run()
         if key == Qt.Key_1:
             self.mode = 0
-            self.btn.setText("Run continuous frequency-modulated signal")
+            self.btn.setText("Run continuous pitch-modulated signal")
         if key == Qt.Key_2:
             self.mode = 1
-            self.btn.setText("Run discrete frequency-modulated signal")
+            self.btn.setText("Run discrete pitch-modulated signal")
         if key == Qt.Key_3:
             self.mode = 2
             self.btn.setText("Run temporal frequency modulated pulse signal")

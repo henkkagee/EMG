@@ -1,5 +1,5 @@
 /*
-  Simple two EMG channel 1 DoF controller
+  Simple two EMG channel 1 DoF controller, Bionic and Rehabilitation Engineering at Aalto University
 */
 #include <Wire.h>
 #include <Adafruit_MotorShield.h>
@@ -59,7 +59,6 @@ void loop() {
   /*EMGctrl = EMGvalue1 - EMGvalue2;
 
 
-//WORK THIS ONE OUT!!! WHAT NEEDS TO BE SMOOTHED!!!
   //smoothing
   
   total = total - EMGbuffer[buffIdx];   // subtract the last reading
